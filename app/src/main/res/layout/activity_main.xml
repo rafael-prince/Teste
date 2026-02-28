@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="24dp"
+    android:gravity="center_horizontal">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/app_name"
+        android:textSize="28sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="8dp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/app_description"
+        android:textSize="14sp"
+        android:textAlignment="center"
+        android:layout_marginBottom="32dp" />
+
+    <!-- Status -->
+    <TextView
+        android:id="@+id/status_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Accessibility Service: checking..."
+        android:textSize="18sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="8dp" />
+
+    <TextView
+        android:id="@+id/js_state_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="JavaScript state: unknown"
+        android:textSize="16sp"
+        android:layout_marginBottom="32dp" />
+
+    <!-- Setup buttons -->
+    <Button
+        android:id="@+id/btn_enable_service"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Enable Accessibility Service"
+        android:layout_marginBottom="16dp" />
+
+    <Button
+        android:id="@+id/btn_add_tile"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Add Quick Settings Tile"
+        android:layout_marginBottom="32dp" />
+
+    <!-- How it works -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/how_it_works"
+        android:textSize="13sp"
+        android:lineSpacingExtra="4dp" />
+
+</LinearLayout>

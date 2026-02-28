@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">JS Toggle for Chrome</string>
+    <string name="tile_label">JS Toggle</string>
+
+    <string name="app_description">Toggle JavaScript in Chrome with one tap from your Quick Settings panel.</string>
+
+    <string name="accessibility_service_description">This service automatically navigates Chrome\'s settings to toggle the JavaScript option when you tap the Quick Settings tile. It only interacts with Chrome\'s settings pages and does not read or modify any other content.</string>
+
+    <string name="how_it_works">How it works:\n\n1. Enable the accessibility service above\n2. Add the JS Toggle tile to your Quick Settings\n3. Tap the tile to toggle JavaScript\n\nWhen you tap the tile, Chrome will briefly open to its JavaScript settings page, the toggle will be flipped automatically, and you\'ll be returned to your previous screen.\n\nNote: The app tracks the JS state locally. If you change the setting manually inside Chrome, tap the tile twice to re-sync.</string>
+</resources>
