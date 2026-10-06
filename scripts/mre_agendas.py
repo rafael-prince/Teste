@@ -303,102 +303,132 @@ def main_content(body):
     return body
 
 
-TIME_RE = re.compile(
-    r"^(?P<h1>[0-2]?\d)\s*[:hH]\s*(?P<m1>[0-5]\d)"
-    r"(?:\s*(?:as|às|a|-|–|—|/|até)\s*(?P<h2>[0-2]?\d)\s*[:hH]\s*(?P<m2>[0-5]\d))?",
-    re.I,
-)
 TIME_ANY = re.compile(r"\b([0-2]?\d)\s*[:hH]\s*([0-5]\d)\b")
 
+# --------------------------------------------------------------------------
+# Seletores reais do gov.br (Plone, portaltype-agendadiaria)
+#
+# Estrutura confirmada em paginas reais de 2021, 2022 e 2023 (agendas antigas
+# e agenda do ministro atual usam o MESMO template):
+#
+#   <div class="dados-agenda">            <- nota do dia (quando houver)
+#     <div class="brasao">...             <- descartar
+#     <ul class="daypicker">...           <- faixa de dias; descartar
+#   <ul class="list-compromissos">
+#     <li class="item-compromisso-wrapper">
+#       <time class="compromisso-inicio">08h00</time>
+#       <time class="compromisso-fim">08h30</time>
+#       <h2 class="compromisso-titulo">...</h2>
+#       <div class="compromisso-local">...</div>
+# --------------------------------------------------------------------------
 
-def hhmm(h, m):
-    return "%02d:%02d" % (int(h), int(m))
+ITEM_SPLIT = "item-compromisso-wrapper"
+RE_INICIO = re.compile(r'<time[^>]*class="[^"]*compromisso-inicio[^"]*"[^>]*>(.*?)</time>', re.S | re.I)
+RE_FIM = re.compile(r'<time[^>]*class="[^"]*compromisso-fim[^"]*"[^>]*>(.*?)</time>', re.S | re.I)
+RE_TITULO = re.compile(r'<h\d[^>]*class="[^"]*compromisso-titulo[^"]*"[^>]*>(.*?)</h\d>', re.S | re.I)
+RE_LOCAL = re.compile(r'<[^>]*class="[^"]*compromisso-local[^"]*"[^>]*>(.*?)</div>', re.S | re.I)
+RE_TAGS = re.compile(r"<[^>]+>")
+RE_DAYPICKER = re.compile(r'<ul[^>]*class="[^"]*daypicker[^"]*".*?</ul>', re.S | re.I)
+RE_BRASAO = re.compile(r'<div[^>]*class="[^"]*brasao[^"]*".*?</div>', re.S | re.I)
+
+
+def detag(s):
+    return re.sub(r"\s+", " ", html.unescape(RE_TAGS.sub(" ", s or ""))).strip()
+
+
+def to_hhmm(s):
+    """'08h00' / '08:00' -> '08:00'."""
+    m = re.search(r"([0-2]?\d)\s*[h:]\s*([0-5]\d)", detag(s), re.I)
+    return "%02d:%02d" % (int(m.group(1)), int(m.group(2))) if m else ""
+
+
+def layout_conhecido(body):
+    """A pagina usa o template de agenda diaria esperado?"""
+    return "list-compromissos" in body or "dados-agenda" in body
+
+
+# Mobilia fixa do bloco .dados-agenda, repetida em todos os dias e que
+# portanto NAO e observacao do dia.
+NOTE_SKIP_CLASSES = (
+    "brasao", "pessoa-area", "pessoa-nome", "pessoa-cargo", "calendar",
+    "daypicker", "search-compromisso", "list-compromissos",
+)
+VOID_TAGS = {"br", "img", "input", "hr", "meta", "link", "source", "area"}
+
+
+class NoteExtractor(HTMLParser):
+    """Texto de .dados-agenda excluindo as subarvores de mobilia fixa."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+        self._depth = 0
+        self._skip_at = None
+
+    def handle_starttag(self, tag, attrs):
+        if tag in VOID_TAGS:
+            return
+        self._depth += 1
+        if self._skip_at is None:
+            cls = dict(attrs).get("class", "") or ""
+            if any(c in cls for c in NOTE_SKIP_CLASSES):
+                self._skip_at = self._depth
+
+    def handle_startendtag(self, tag, attrs):
+        return
+
+    def handle_endtag(self, tag):
+        if tag in VOID_TAGS:
+            return
+        if self._skip_at is not None and self._depth <= self._skip_at:
+            self._skip_at = None
+        self._depth -= 1
+
+    def handle_data(self, data):
+        if self._skip_at is None and data.strip():
+            self.parts.append(data.strip())
+
+
+def day_note(body):
+    """Texto livre no topo do dia (cidade, fuso, aviso), se houver."""
+    i = body.find("dados-agenda")
+    if i < 0:
+        return ""
+    i = body.rfind("<", 0, i)              # recua ate o inicio da tag
+    j = body.find("list-compromissos", i)
+    if j > 0:
+        j = body.rfind("<", i, j)          # corta ANTES da tag <ul ...>
+        seg = body[i:j]
+    else:
+        seg = body[i:i + 30000]
+    ne = NoteExtractor()
+    ne.feed(seg)
+    ne.close()
+    return re.sub(r"\s+", " ", " ".join(ne.parts)).strip()[:500]
 
 
 def parse_day(body, autoridade, data, url):
-    """
-    Extrai (linhas, observacao_do_dia) de um HTML de um dia.
-
-    Heuristica deliberadamente tolerante a markup: o gov.br usa ora <table>,
-    ora listas/<div>. Em todos os casos cada compromisso comeca por um
-    horario (HH:MM, opcionalmente "HH:MM as HH:MM"). Texto livre no topo do
-    dia, antes do primeiro horario, vira observacao_do_dia.
-    """
-    content = main_content(body)
-    bp = BlockParser()
-    bp.feed(content)
-    bp.close()
-
-    blocks = []
-    for tag, cls, txt in bp.blocks:
-        # descarta cromo de navegacao / rodape recorrentes
-        n = norm(txt)
-        if not n or len(n) < 2:
-            continue
-        if n in ("inicio", "agenda", "compartilhe", "voltar", "topo",
-                 "ministerio das relacoes exteriores", "imprimir"):
-            continue
-        blocks.append((tag, cls, txt))
-
-    rows = []
-    obs_parts = []
-    seen_first_time = False
-
-    for tag, cls, txt in blocks:
-        lines = [l.strip() for l in txt.split("\n") if l.strip()]
-        for line in lines:
-            m = TIME_RE.match(line)
-            if m:
-                seen_first_time = True
-                resto = line[m.end():].strip(" \t-–—:;|")
-                hora_inicio = hhmm(m.group("h1"), m.group("m1"))
-                hora_fim = (hhmm(m.group("h2"), m.group("m2"))
-                            if m.group("h2") else "")
-                rows.append({
-                    "hora_inicio": hora_inicio,
-                    "hora_fim": hora_fim,
-                    "descricao": resto,
-                    "local": "",
-                })
-            elif seen_first_time and rows:
-                # continuacao do compromisso anterior: descricao ou local
-                n = norm(line)
-                if n.startswith(("local", "local:")) or n.startswith("endereco"):
-                    rows[-1]["local"] = re.sub(
-                        r"^(local|endere[cç]o)\s*:?\s*", "", line, flags=re.I).strip()
-                elif not rows[-1]["descricao"]:
-                    rows[-1]["descricao"] = line
-                else:
-                    rows[-1]["descricao"] += " | " + line
-            elif not seen_first_time:
-                # texto livre do topo do dia (cidade, fuso, aviso)
-                n = norm(line)
-                if n == data or re.fullmatch(r"[\d/\.\-]{6,10}", n):
-                    continue
-                obs_parts.append(line)
-
-    # separa "descricao | Local: X" que tenha vindo colado
-    for r in rows:
-        if not r["local"]:
-            m = re.search(r"\b(local|endere[cç]o)\s*:\s*(.+)$", r["descricao"], re.I)
-            if m:
-                r["local"] = m.group(2).strip()
-                r["descricao"] = r["descricao"][:m.start()].strip(" |-–—")
-
-    obs = " / ".join(dict.fromkeys(obs_parts))[:500]
-
+    """Extrai (linhas, observacao_do_dia) de um HTML de um dia."""
+    obs = day_note(body)
     out = []
-    for r in rows:
-        desc = re.sub(r"\s+", " ", r["descricao"]).strip(" |-–—")
-        if not desc and not r["local"]:
+    for ch in body.split(ITEM_SPLIT)[1:]:
+        ini = RE_INICIO.search(ch)
+        fim = RE_FIM.search(ch)
+        tit = RE_TITULO.search(ch)
+        loc = RE_LOCAL.search(ch)
+        descricao = detag(tit.group(1)) if tit else ""
+        local = detag(loc.group(1)) if loc else ""
+        hora_i = to_hhmm(ini.group(1)) if ini else ""
+        hora_f = to_hhmm(fim.group(1)) if fim else ""
+        if not (descricao or local or hora_i):
             continue
         out.append({
             "autoridade": autoridade,
             "data": data,
-            "hora_inicio": r["hora_inicio"],
-            "hora_fim": r["hora_fim"],
-            "descricao": desc,
-            "local": re.sub(r"\s+", " ", r["local"]).strip(),
+            "hora_inicio": hora_i,
+            "hora_fim": hora_f,
+            "descricao": descricao,
+            "local": local,
             "observacao_do_dia": obs,
             "url": url,
         })
@@ -529,7 +559,11 @@ def cmd_download(args):
                     fh.write(body)
                 total_new += 1
                 rows, _ = parse_day(body, a["autoridade"], data, url)
-                if not rows:
+                if not rows and not layout_conhecido(body):
+                    log_event(evento="layout_desconhecido", slug=a["slug"],
+                              data=data, url=url)
+                    print("  %s  200 (LAYOUT DESCONHECIDO)" % data)
+                elif not rows:
                     log_event(evento="vazio", slug=a["slug"], data=data, url=url)
                     print("  %s  200 (sem itens)" % data)
                 else:
@@ -631,6 +665,7 @@ def cmd_report(args):
                 s[e["evento"]] = s.get(e["evento"], 0) + 1
     print("%-32s %8s %8s %8s %8s %8s" % (
         "autoridade", "pedidos", "com_itens", "vazios", "404", "erros"))
+    total = {}
     for slug, s in sorted(stats.items()):
         pedidos = sum(s.values())
         erros = sum(v for k, v in s.items()
