@@ -47,7 +47,7 @@ CSV_FULL = "agendas_mre.csv"
 CSV_FILTER = "agendas_mre_filtro.csv"
 
 DELAY_SECONDS = 3.0
-TIMEOUT_SECONDS = 60
+TIMEOUT_SECONDS = 180
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
