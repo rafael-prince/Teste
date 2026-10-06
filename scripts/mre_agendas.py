@@ -23,6 +23,7 @@ import argparse
 import csv
 import datetime as dt
 import html
+import http.client
 import json
 import os
 import re
@@ -178,22 +179,38 @@ def looks_blocked(status, body):
     return None
 
 
-def fetch(url):
+# Falhas de transporte que merecem nova tentativa. OSError cobre URLError,
+# ConnectionError, TimeoutError e ssl.SSLError; http.client.HTTPException
+# cobre RemoteDisconnected e BadStatusLine, que NAO sao OSError e por isso
+# escapavam do tratamento anterior e derrubavam a execucao inteira.
+NET_ERRORS = (OSError, http.client.HTTPException)
+
+
+def fetch(url, tentativas=3):
     """Devolve (status, body). Levanta BlockedError em 429/CAPTCHA."""
     req = urllib.request.Request(url, headers={
         "User-Agent": USER_AGENT,
         "Accept": "text/html,application/xhtml+xml",
         "Accept-Language": "pt-BR,pt;q=0.9",
     })
-    try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
-            raw = resp.read()
-            status = resp.getcode()
-    except urllib.error.HTTPError as e:
-        raw = e.read() or b""
-        status = e.code
-    except urllib.error.URLError as e:
-        raise RuntimeError("falha de rede em %s: %s" % (url, e.reason))
+    ultimo = None
+    for n in range(1, tentativas + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
+                raw = resp.read()
+                status = resp.getcode()
+            break
+        except urllib.error.HTTPError as e:   # antes de OSError: e subclasse
+            raw = e.read() or b""
+            status = e.code
+            break
+        except NET_ERRORS as e:
+            ultimo = e
+            if n < tentativas:
+                time.sleep(2 ** n)            # 2s, 4s
+    else:
+        raise RuntimeError("falha de rede em %s apos %d tentativas: %s"
+                           % (url, tentativas, ultimo))
 
     body = raw.decode("utf-8", errors="replace")
     reason = looks_blocked(status, body)
