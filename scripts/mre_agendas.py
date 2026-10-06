@@ -520,6 +520,22 @@ def cmd_download(args):
               % ", ".join(a["slug"] for a in pendentes))
         autoridades = [a for a in autoridades if a["url"]]
 
+    # Dias que ja responderam 404 nao sao gravados em disco, entao sem este
+    # cache cada retomada os requisitaria de novo. Para agendas historicas um
+    # 404 e estavel: a pagina daquele dia nunca foi publicada.
+    vistos_404 = set()
+    if os.path.exists(LOG_PATH) and not args.recheck_404:
+        with open(LOG_PATH, encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                if e.get("evento") == "404":
+                    vistos_404.add((e.get("slug"), e.get("data")))
+    if vistos_404:
+        print("404 ja conhecidos (serao pulados): %d" % len(vistos_404))
+
     total_new = 0
     for a in autoridades:
         destino = os.path.join(OUT_DIR, a["slug"])
@@ -529,7 +545,9 @@ def cmd_download(args):
         for data in daterange(a["inicio"], a["fim"]):
             path = os.path.join(destino, data + ".html")
             if os.path.exists(path) and os.path.getsize(path) > 0:
-                continue  # retomada
+                continue  # retomada: ja baixado
+            if (a["slug"], data) in vistos_404:
+                continue  # retomada: ja se sabe que nao existe
             url = "%s/%s" % (a["url"].rstrip("/"), data)
             try:
                 status, body = fetch(url)
@@ -554,16 +572,19 @@ def cmd_download(args):
                 log_event(evento="http_%d" % status, slug=a["slug"],
                           data=data, url=url)
                 print("  %s  HTTP %s" % (data, status))
+            elif not layout_conhecido(body):
+                # HTTP 200 mas sem o portlet de agenda: casca generica do
+                # gov.br (o conteudo nao renderizou). NAO gravar, para que a
+                # proxima retomada tente de novo em vez de fixar a falha.
+                log_event(evento="layout_desconhecido", slug=a["slug"],
+                          data=data, url=url, bytes=len(body))
+                print("  %s  200 (casca sem agenda; sera repetido)" % data)
             else:
                 with open(path, "w", encoding="utf-8") as fh:
                     fh.write(body)
                 total_new += 1
                 rows, _ = parse_day(body, a["autoridade"], data, url)
-                if not rows and not layout_conhecido(body):
-                    log_event(evento="layout_desconhecido", slug=a["slug"],
-                              data=data, url=url)
-                    print("  %s  200 (LAYOUT DESCONHECIDO)" % data)
-                elif not rows:
+                if not rows:
                     log_event(evento="vazio", slug=a["slug"], data=data, url=url)
                     print("  %s  200 (sem itens)" % data)
                 else:
@@ -692,6 +713,8 @@ def main():
     sp = sub.add_parser("download")
     sp.add_argument("--only", nargs="*", default=None,
                     help="slugs a baixar (default: todos)")
+    sp.add_argument("--recheck-404", action="store_true",
+                    help="requisitar de novo os dias ja registrados como 404")
     sp.set_defaults(func=cmd_download)
 
     sp = sub.add_parser("inspect")
