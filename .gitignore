@@ -13,3 +13,7 @@
 # dados baixados das agendas do MRE (volumosos; nao versionar)
 /agendas_mre/
 /agendas_mre_html.zip
+
+# artefatos python
+__pycache__/
+*.py[cod]
