@@ -9,3 +9,7 @@
 .cxx
 *.apk
 *.aab
+
+# dados baixados das agendas do MRE (volumosos; nao versionar)
+/agendas_mre/
+/agendas_mre_html.zip
